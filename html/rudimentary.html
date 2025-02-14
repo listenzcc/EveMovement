@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="g3common.css">
+    <link rel="stylesheet" href="recorder.css">
+    <title>Rudimentary Streams</title>
+</head>
+
+<body>
+    <div class="content">
+        <div class="box g3" id="recordings">
+            <h1>Rudimentary View</h1>
+            <div class="footer">
+                <button title="Start/Stop Rudimentary Streams" id="startstop">...</button>
+                <button title="Perform a calibration" id="calib">&#8857;</button>
+                <input id="scenescale" type="checkbox" name="scale" autocomplete="off"></input>
+                <label for="scenescale">Scale Scene Images</label>
+            </div>
+            <i>Note; Rudimentary use a huge amount of resources on the
+                Recording Unit. It is not recommended for any type of
+                production use.</i>
+            <p>
+                Scene Time: <span id="scenets"></span><br>
+                Gaze Time: <span id="gazets"></span><br>
+                Gaze Position: <span id="gaze"></span><br>
+                IMU Data: <span id="imudata"></span><br>
+                <img class="g3" id="scene" src="g3.png">
+            <div class="flex">
+                <div id="eventslog"></div>
+                <input id="eventmsg" type="text"></input>
+                <button id="eventsend" title="Send">&#10162;</button>
+            </div>
+
+            <p>
+        </div>
+    </div>
+    <script src="g3common.js"></script>
+    <script src="g3obj.js"></script>
+    <script>
+
+        function send_event(rudi) {
+            rudi.call("send-event",
+                ["WebUI", {
+                    client: "rudimentary",
+                    text: eventmsg.value
+                }]);
+        }
+
+        function rudimentary_init() {
+            var startstop = document.getElementById("startstop");
+            var root = new G3Obj();
+            root.ws['hostname'] = 'tg03b-080201140731.local'
+            root.open()
+                .then(() => {
+                    var rudi = root.child("rudimentary");
+                    var keepalive = null;
+                    var _gazeid;
+                    var _sceneid;
+                    var _eventid;
+                    var _imuid;
+                    var imus = [];
+                    rudi.get("scene-scale")
+                        .then((r) => {
+                            console.log("scene-scale", r);
+                            scenescale.checked = r == 2;
+                        });
+                    scenescale.onchange = () => {
+                        rudi.set("scene-scale", scenescale.checked ? 2 : 1);
+                    };
+
+                    eventsend.onclick = () => send_event(rudi);
+                    eventmsg.onchange = () => send_event(rudi);
+
+                    startstop.innerHTML = ICON_PLAY;
+                    startstop.onclick = async () => { foo() };
+
+                    async function foo() {
+                        if (keepalive != null) {
+                            clearInterval(keepalive);
+                            rudi.disconnect(_gazeid);
+                            rudi.disconnect(_sceneid);
+                            rudi.disconnect(_eventid);
+                            rudi.disconnect(_imuid);
+                            startstop.innerHTML = ICON_PLAY;
+                            keepalive = null;
+                        } else {
+                            _gazeid = await rudi.connect("gaze", (body) => {
+                                gazets.innerHTML = body[0].toFixed(3);
+                                if ("gaze2d" in body[1]) {
+                                    gaze.innerHTML = "(" +
+                                        body[1].gaze2d[0].toFixed(2) + ", " +
+                                        body[1].gaze2d[1].toFixed(2) +
+                                        ")";
+                                } else {
+                                    gaze.innerHTML = "()";
+                                }
+                            });
+                            _sceneid = await rudi.connect("scene", (body) => {
+                                scenets.innerHTML = "Scene: " + body[0].toFixed(3);
+                                scene.src = "data:image/jpeg;charset=utf-8;base64," + body[1];
+                            });
+                            _imuid = await rudi.connect("imu", (body) => {
+                                for (var unit in body[1]) {
+                                    var vec = body[1][unit];
+                                    if (!(unit in imus)) {
+                                        imus[unit] = document.createElement("pre");
+                                        imudata.append(imus[unit]);
+                                    }
+                                    imus[unit].innerHTML = body[0].toFixed(3) + " : " + unit + " " + g3_v2s(body[1][unit]);
+                                };
+                            });
+                            _eventid = await rudi.connect("event", (body) => {
+                                var ts = body[0];
+                                var tagname = body[1]["tag"];
+                                var obj = body[1]["object"];
+
+                                var ev = document.createElement("div");
+                                var hdr = document.createElement("span");
+                                var msg = document.createElement("pre");
+                                ev.classList.add("logevent");
+                                ev.append(hdr);
+                                ev.append(msg);
+                                if (tagname == "WebUI") {
+                                    hdr.innerHTML = ts.toFixed(3) + " : <b>" + obj["client"] + "</b>";
+                                    msg.innerHTML = obj["text"];
+                                } else {
+                                    hdr.innerHTML = ts.toFixed(3) + " : " + data["tag"];
+                                    msg.innerHTML = JSON.stringify(data["object"]);
+                                }
+                                eventslog.append(ev);
+                                while (eventslog.childNodes.length > 12)
+                                    eventslog.removeChild(eventslog.childNodes[0]);
+                                ev.scrollIntoView();
+                            });
+
+
+                            rudi.call("keepalive");
+                            keepalive = setInterval(() => {
+                                console.log("KEepAliove");
+                                rudi.call("keepalive");
+                            }, 3000);
+                            startstop.innerHTML = ICON_STOP;
+                        }
+                    };
+                    calib.onclick = async () => {
+                        calib.innerHTML = ICON_CALIBRATE + ICON_WAIT;
+                        var succ = await rudi.call("calibrate");
+                        if (succ)
+                            calib.innerHTML = ICON_CALIBRATE + ICON_OK;
+                        else
+                            calib.innerHTML = ICON_CALIBRATE + ICON_CANCEL;
+                    };
+                });
+        }
+
+        rudimentary_init();
+
+    </script>
+</body>
+
+</html>

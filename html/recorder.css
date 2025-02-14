@@ -1,0 +1,16 @@
+
+.recstatus {
+    color: Silver;
+}
+
+
+.storage {
+    border: 1px solid Silver;
+    display: inline-grid;
+    grid-template-columns: min-content min-content min-content auto min-content;
+    overflow-y: auto;
+}
+
+.storage h3 {
+    margin: 3px;
+}
