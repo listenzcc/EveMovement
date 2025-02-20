@@ -39,6 +39,8 @@ data_lock = threading.RLock()
 # Handle truncated images
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+scale_image_for_yolo_speed_up = 2
+
 # %% ---- 2025-02-14 ------------------------
 # Function and class
 
@@ -86,13 +88,72 @@ def detect_qrcode():
             time.sleep(0.1)
             continue
         found = qreader.detect_and_decode(
-            image=mat[::2, ::2, :].copy(), return_detections=True)
+            image=mat[::scale_image_for_yolo_speed_up, ::scale_image_for_yolo_speed_up, :].copy(), return_detections=True)
+
+
+def assign_points(p1, p2, p3):
+    '''
+    Assign the points.
+
+    The right most point as NE.
+    The other two points on the top, as the NW.
+    The latest point as the SW.
+    '''
+    points = np.array([p1, p2, p3])
+    p_ne = sorted(points, key=lambda p: p[0], reverse=True)[0]
+    points = [e for e in points if np.sum(np.abs(e-p_ne)) != 0]
+
+    if points[0][1] > points[1][1]:
+        p_sw = points[0]
+        p_nw = points[1]
+    else:
+        p_sw = points[1]
+        p_nw = points[0]
+
+    corner_points = {
+        'NE': p_ne,
+        'NW': p_nw,
+        'SW': p_sw,
+    }
+    return corner_points
+
+
+def convert_coordinates(corner_points, point):
+    '''
+    Convert the point to the coordinate system defined by the corner points.
+    The NE point's coordinates are (1, 0).
+    The NW point's coordinates are (0, 0).
+    The SW point's coordinates are (0, 1).
+    '''
+    point = np.array(point)
+    nw = corner_points['NW']
+    ne = corner_points['NE']
+    sw = corner_points['SW']
+    u = point - nw
+    g1 = ne - nw
+    g2 = sw - nw
+    f1 = np.array([g2[1], -g2[0]])
+    h1 = f1 / np.dot(g1, f1)
+    f2 = np.array([g1[1], -g1[0]])
+    h2 = f2 / np.dot(g2, f2)
+    x, y = np.dot(u, h1), np.dot(u, h2)
+    return x, y
+
+
+def guess_gaze_xy_in_screen(found, fx, fy):
+    p1 = np.array(found[1][0]['cxcy'])*scale_image_for_yolo_speed_up
+    p2 = np.array(found[1][1]['cxcy'])*scale_image_for_yolo_speed_up
+    p3 = np.array(found[1][2]['cxcy'])*scale_image_for_yolo_speed_up
+    corner_points = assign_points(p1, p2, p3)
+    x, y = convert_coordinates(corner_points, (fx, fy))
+    return x, y
 
 
 threading.Thread(target=detect_qrcode, daemon=True).start()
 
 # %% ---- 2025-02-14 ------------------------
 # Play ground
+cv2.namedWindow(winname)
 while True:
     time.sleep(0.1)
 
@@ -110,18 +171,28 @@ while True:
             continue
 
     for f in found[1]:
-        print(f['cxcy'])
+        # print(f['cxcy'])
         x, y = f['cxcy']
-        x *= 2
-        y *= 2
+        x *= scale_image_for_yolo_speed_up
+        y *= scale_image_for_yolo_speed_up
         mat[int(y)-10:int(y)+10, int(x)-10:int(x)+10] = (0, 255, 0)
 
     fx = int(fx * w)
     fy = int(fy * h)
 
     mat[fy-10:fy+10, fx-10:fx+10, 2] = 255
+
+    try:
+        _x, _y = guess_gaze_xy_in_screen(found, fx, fy)
+        print(f'Estimated gaze coord: {_x:0.2f}, {_y:0.2f}')
+    except:
+        import traceback
+        traceback.print_exc()
+        pass
+
     cv2.imshow(winname, mat)
-    cv2.waitKey(1)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
 cv2.destroyAllWindows()
 
